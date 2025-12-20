@@ -1,91 +1,99 @@
-# BM25 + FAISS
-
 # app/services/retriever.py 
-import os, json
+import psycopg2
 import numpy as np
-from rank_bm25 import BM25Okapi
-import faiss
 from typing import List, Dict, Any, Optional, Tuple
 from app.core.config import settings
 from app.services.embedder import encode
 
-# FAISS files
-_FAISS_INDEX = os.path.join(settings.FAISS_DIR, "index.faiss")
-_FAISS_META  = os.path.join(settings.FAISS_DIR, "meta.json")
-
-# Cache
-_bm25 = None
-_bm25_texts: list[str] = []
-_faiss_index = None
-_meta: list[dict] = []
-
-def _load_faiss():
-    global _faiss_index, _meta
-    if _faiss_index is None and os.path.exists(_FAISS_INDEX):
-        _faiss_index = faiss.read_index(_FAISS_INDEX)
-    if not _meta and os.path.exists(_FAISS_META):
-        with open(_FAISS_META, "r", encoding="utf-8") as f:
-            _meta = json.load(f)
-
-def _build_bm25():
-    global _bm25, _bm25_texts
-    if _bm25 is not None: return
-    if not _meta:
-        _load_faiss()
-    _bm25_texts = [m["text"] for m in _meta]
-    tokenized = [t.lower().split() for t in _bm25_texts]
-    _bm25 = BM25Okapi(tokenized)
-
-def _search_bm25(query: str, k: int) -> List[Tuple[int, float]]:
-    _build_bm25()
-    scores = _bm25.get_scores(query.lower().split())
-    idxs = np.argsort(scores)[::-1][:k]
-    return [(int(i), float(scores[int(i)])) for i in idxs if scores[int(i)] > 0]
-
-def _search_faiss(query: str, k: int) -> List[Tuple[int, float]]:
-    _load_faiss()
-    if _faiss_index is None:
-        return []
-    qv = np.array(encode([query])[0], dtype="float32")[None, :]
-    D, I = _faiss_index.search(qv, k)
-    return [(int(i), float(1 - D[0][j])) for j, i in enumerate(I[0]) if i >= 0]
-    # note: if index uses inner-product, adjust scoring accordingly
+def _get_conn():
+    return psycopg2.connect(settings.PG_DSN)
 
 def hybrid_search(query: str, article_id: Optional[int], filters: Optional[Dict[str, Any]]) -> List[dict]:
     """
-    Returns list of {articleId, chunk_idx, text, score}
-    If article_id provided, filter candidates to that article only.
+    Search using pgvector cosine distance.
+    Currently only Vector search is implemented (Hybrid with BM25 requires more complex setup in Postgres or Python).
+    
+    Args:
+        query: User question
+        article_id: Filter by article (for Q&A context)
+        filters: Additional filters
     """
-    _load_faiss()
-    # run both
-    bm = _search_bm25(query, settings.TOP_K_BM25)
-    ve = _search_faiss(query, settings.TOP_K_VEC)
+    try:
+        # 1. Embed Query
+        qv = encode([query])[0]
+        
+        # 2. SQL Query
+        # 1 - (embedding <=> qv) converts distance to similarity score
+        conn = _get_conn()
+        cur = conn.cursor()
+        
+        # Base query
+        # We need to cast the list[float] to string representation for pgvector input: '[0.1, 0.2, ...]'
+        vec_str = str(qv)
+        
+        where_clauses = []
+        params = [vec_str] # for ORDER BY embedding <=> %s
+        
+        # Optional: Filter by article_id (if this is Q&A within an article context)
+        # Note: If article_id is strictly provided, we might just want to return all chunks of that article?
+        # But RAG usually scans relevancy.
+        if article_id:
+            where_clauses.append("article_id = %s")
+            params.append(article_id)
 
-    # merge by linear weighted score
-    alpha = settings.HYBRID_ALPHA
-    scores: dict[int, float] = {}
-    for i, s in bm: scores[i] = scores.get(i, 0.0) + (1-alpha) * (s if s>0 else 0)
-    for i, s in ve: scores[i] = scores.get(i, 0.0) + alpha * (s if s>0 else 0)
+        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        
+        # Note: ORDER BY <-> requires the vector parameter again?
+        # A common pattern: ORDER BY embedding <=> %s
+        # params needs: [vec_str] (for order by) + [filters...]
+        
+        # Let's fix params order based on SQL structure:
+        # SELECT ... FROM ... WHERE ... ORDER BY ... LIMIT ...
+        
+        sql_params = []
+        if article_id: sql_params.append(article_id)
+        
+        sql_params.append(vec_str) # for Order By
+        sql_params.append(settings.TOP_K_VEC) # for Limit
+        
+        query_sql = f"""
+            SELECT article_id, chunk_text, 1 - (embedding <=> %s::vector) as score
+            FROM article_chunks
+            {where_str}
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s;
+        """
+        
+        # Correct params alignment:
+        # 1. <=> %s in SELECT (optional, for score) -> we used %s inside select? 
+        # Actually standard pgvector usage:
+        # ORDER BY embedding <=> '[...]'
+        
+        # Simplified query to avoid parameter confusion:
+        cur.execute(f"""
+            SELECT article_id, chunk_text, 1 - (embedding <=> %s::vector) as score
+            FROM article_chunks
+            {where_str}
+            ORDER BY embedding <=> %s::vector
+            LIMIT %s;
+        """, (vec_str, *sql_params))
+        
+        rows = cur.fetchall()
+        conn.close()
+        
+        # 3. Format Output
+        out = []
+        for r in rows:
+            # r = (article_id, chunk_text, score)
+            out.append({
+                "articleId": r[0],
+                "chunk_idx": 0, # we didn't store idx effectively, 0 is placeholder
+                "text": r[1],
+                "score": float(r[2])
+            })
+            
+        return out
 
-    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    out: list[dict] = []
-    for idx, sc in ranked:
-        if idx < 0 or idx >= len(_meta): continue
-        m = _meta[idx]
-        if article_id is not None and m.get("articleId") != article_id:
-            continue
-        # filters ví dụ: {"categoryId": 3, "lang":"vi"}
-        if filters:
-            ok = True
-            for k, v in filters.items():
-                if str(m.get(k)) != str(v): ok = False; break
-            if not ok: continue
-        out.append({"articleId": m["articleId"], "chunk_idx": m["chunk_idx"], "text": m["text"], "score": sc})
-        if len(out) >= settings.TOP_K_FINAL: break
-    return out
-
-
-# Chuẩn bị FAISS meta: meta.json là list các object:
-# [{"articleId": 123, "chunk_idx": 0, "text": "đoạn văn ..."}, ...]
-# index.faiss chứa vectors (embedding dim = EMBED_DIM). 
-# Có thể build offline (ETL) từ bảng article_chunks của backend.
+    except Exception as e:
+        print(f"pgvector search error: {e}")
+        return []

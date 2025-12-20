@@ -25,4 +25,4 @@ class Citation(BaseModel):
 
 class QAOut(BaseModel):
     answer: str
-    citations: List[Citation] = []
+    citations: List[str] = []

@@ -5,4 +5,13 @@ services:
       context: .
       dockerfile: ./Dockerfile
     ports:
-      - 8000:8000
+      - "8000:8000"
+    environment:
+      # Connect to services running on HOST (Windows Docker Desktop)
+      PG_DSN: "postgresql://postgres:postgres@host.docker.internal:5432/newsapp"
+      BACKEND_BASE: "http://host.docker.internal:8080"
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY}" # Read from .env file in this directory
+    volumes:
+      - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Required for Linux/some configs, safe to add

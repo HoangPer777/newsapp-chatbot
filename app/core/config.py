@@ -13,26 +13,32 @@ class Settings(BaseSettings):
     BACKEND_BASE: str = "http://localhost:8080"
 
     # llm (OpenAI-compatible)
+    GOOGLE_API_KEY: str = Field(default="", description="Gemini API Key")
     OPENAI_API_KEY: str = Field(default="", description="LLM key")
     OPENAI_API_BASE: str = Field(default="https://api.openai.com/v1")
-    LLM_MODEL: str = Field(default="gpt-4o-mini")   # thay bằng model bạn train / OAI compat
+    LLM_MODEL: str = Field(default="models/gemini-flash-latest")   # thay bằng model bạn train / OAI compat
 
     # embeddings
-    EMBED_PROVIDER: str = Field(default="hf", description="hf|openai")
+    # embeddings
+    EMBED_PROVIDER: str = Field(default="gemini", description="hf|openai|gemini")
     EMBED_MODEL_HF: str = Field(default="intfloat/multilingual-e5-base")
     EMBED_MODEL_OAI: str = Field(default="text-embedding-3-large")
+    EMBED_MODEL_GEMINI: str = Field(default="models/text-embedding-004")
     EMBED_DIM: int = 768
 
     # retrieval
-    RETRIEVER_BACKEND: str = Field(default="faiss", description="faiss|pgvector")
+    RETRIEVER_BACKEND: str = Field(default="pgvector", description="faiss|pgvector")
     FAISS_DIR: str = "app/data/vectorstore"
     TOP_K_BM25: int = 20
     TOP_K_VEC: int = 20
     TOP_K_FINAL: int = 8
     HYBRID_ALPHA: float = 0.6   # trọng số vector vs bm25 (0..1)
-
-    # pgvector (nếu dùng)
-    PG_DSN: str = "postgresql://postgres:postgres@localhost:5432/newsapp"
+    
+    # pgvector 
+    # NOTE: In docker-compose pipeline, chatbot sees 'newsapp-pg' or 'db' host, BUT
+    # user is running 'uvicorn' locally on host, so localhost:5432 is correct if ports are mapped.
+    # If running inside docker, it should be 'postgres://postgres:postgres@db:5432/newsapp'
+    PG_DSN: str = Field(default="postgresql://postgres:postgres@localhost:5432/newsapp", description="Postgres connection string")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
