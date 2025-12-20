@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.env
+.venv
+
+# IDE
+.vscode/
+.idea/
+
+# Artifacts & Temporary Files
+models_output.txt
+check_models.py
+*.log
+
+# Docker
+.dockerignore
