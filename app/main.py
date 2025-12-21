@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.routers import health, summarize, qa
+from app.routers import health, qa
 
 setup_logging()
 
@@ -21,7 +21,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(health.router, prefix="/health", tags=["health"])
-app.include_router(summarize.router, prefix="/summarize", tags=["summarize"])
+
 app.include_router(qa.router, prefix="/qa", tags=["qa"])
 from app.routers import search, ingest
 app.include_router(search.router, prefix="/search", tags=["search"])
