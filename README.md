@@ -1,84 +1,96 @@
-## NewsApp Chatbot
+# NewsApp AI Service
 
-Dịch vụ FastAPI cho demo RAG về tin tức với hai khả năng chính:
-- Chatbot hỏi đáp (Q&A) dựa trên ngữ cảnh truy xuất.
-- Tóm tắt văn bản cho bài viết hoặc nội dung thô.
+Dịch vụ AI Backend cho ứng dụng đọc báo NewsApp, cung cấp các tính năng thông minh như Tìm kiếm ngữ nghĩa (Semantic Search), Chatbot hỏi đáp (RAG), và Tóm tắt bài báo.
 
-Repo được cấu hình sẵn cho mục đích demo mà không cần key AI bên ngoài. Tất cả lời gọi AI đã được mock (giả lập), nên dịch vụ có thể khởi động và trả về phản hồi ổn định.
+## 🚀 Tính năng chính
 
-### Tính năng
-- Tóm tắt văn bản qua `POST /summarize`
-- Hỏi đáp (Q&A) qua `POST /qa` sử dụng truy xuất lai (BM25 + FAISS) với embedding demo
-- Kiểm tra sức khỏe dịch vụ `GET /health`
-- Tài liệu API tương tác: Swagger UI (`/docs`) và ReDoc (`/redoc`)
+1.  **Semantic Search (Tìm kiếm ngữ nghĩa)**:
+    *   Cho phép tìm kiếm bài báo dựa trên ý nghĩa câu hỏi thay vì chỉ khớp từ khóa.
+    *   Sử dụng **Google Gemini Embeddings** để vector hóa dữ liệu.
+    *   Lưu trữ và truy vấn Vector bằng **PostgreSQL + pgvector**.
+    *   Trả về kết quả phong phú (Ảnh, Tác giả, Độ phù hợp %).
 
-### Công nghệ
-- FastAPI + Uvicorn
-- FAISS + rank-bm25 (hybrid retrieval)
-- Docker + Docker Compose
+2.  **RAG Chatbot (Hỏi đáp thông minh)**:
+    *   Trả lời câu hỏi của người dùng dựa trên nội dung bài báo cụ thể.
+    *   Sử dụng kiến trúc **RAG (Retrieval-Augmented Generation)**.
+    *   Tích hợp **LangChain** để quản lý luồng hội thoại và Prompt.
+    *   Model: **Gemini 1.5 Flash** (Tốc độ cao, chi phí thấp).
 
----
+3.  **Summarization (Tóm tắt)**:
+    *   Tóm tắt nội dung bài báo dài thành các ý chính ngắn gọn.
 
-## Bắt đầu nhanh
+4.  **Data Ingestion (Đồng bộ dữ liệu)**:
+    *   API để nhận bài viết mới từ Backend chính (Spring Boot), chia nhỏ (chunking), vector hóa và lưu vào DB.
 
-### Yêu cầu
-- Cài đặt Docker Desktop (kèm Docker Compose)
-- Cài đặt Git
+## 🛠 Công nghệ sử dụng
 
-### Clone repository
-```bash
-git clone https://github.com/HoangPer777/newsapp-chatbot.git
-cd newsapp-chatbot
+*   **Ngôn ngữ**: Python 3.10+
+*   **Framework**: FastAPI
+*   **Database**: PostgreSQL (với extension `vector`)
+*   **AI/LLM**:
+    *   [Google Generative AI (Gemini)](https://ai.google.dev/)
+    *   [LangChain](https://www.langchain.com/)
+*   **Other Libs**: `psycopg2` (DB Driver), `uvicorn` (Server).
+
+## ⚙️ Cài đặt & Chạy
+
+### 1. Yêu cầu tiên quyết
+*   Docker & Docker Compose
+*   API Key từ Google AI Studio (Gemini)
+
+### 2. Cấu hình môi trường (.env)
+Tạo file `.env` trong thư mục gốc `newsapp-chatbot` (hoặc cấu hình trong `docker-compose.yml`):
+
+```env
+# AI Keys
+GOOGLE_API_KEY=your_gemini_api_key_here
+
+# Database Config
+PG_DSN=postgresql://postgres:postgres@newsapp-pg:5432/newsapp
+
+# Tùy chỉnh Model (Optional)
+LLM_MODEL=models/gemini-1.5-flash
+EMBED_MODEL_GEMINI=models/text-embedding-004
 ```
 
-### Build và chạy (Docker Compose)
+### 3. Khởi chạy với Docker
+Dịch vụ được tích hợp trong file `docker-compose.yml` của toàn bộ dự án.
+
 ```bash
-docker compose build --no-cache
-docker compose up -d
+# Tại thư mục gốc của project (nơi chứa docker-compose.yml chính)
+docker compose up -d newsappchatbot
 ```
 
-Dịch vụ sẽ sẵn sàng tại:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-- Health check: http://localhost:8000/health
+### 4. API Endpoints
 
-Kiểm tra trạng thái:
-```bash
-docker compose ps
-docker compose logs --tail=100
-```
+Document chi tiết có sẵn tại `/docs` (Swagger UI) khi chạy service.
 
-Dừng dịch vụ:
-```bash
-docker compose down
-```
+*   `POST /search`: Tìm kiếm bài viết.
+    *   Body: `{"query": "..."}`
+*   `POST /qa`: Hỏi đáp với bài viết.
+    *   Body: `{"question": "...", "articleId": 123}`
+*   `POST /summarize`: Tóm tắt văn bản.
+*   `POST /ingest`: (Internal) Nhập dữ liệu bài viết mới.
 
-### Endpoints (Demo)
-- `GET /health` → { "status": "ok" }
-- `POST /summarize` → trả về thông điệp tóm tắt demo
-- `POST /qa` → trả về câu trả lời demo với danh sách trích dẫn rỗng
+## 📂 Cấu trúc thư mục
 
-Bạn có thể thử trực tiếp các request mẫu trong Swagger UI.
-
----
-
-## Cấu trúc dự án
 ```
 app/
-  core/           # config, logging
-  routers/        # router FastAPI (health, summarize, qa)
-  services/       # retriever, rag pipeline, llm client (mock), embedder (mock)
-  models/         # pydantic schemas
-  main.py         # khởi tạo FastAPI app
-Dockerfile
-compose.yaml
-requirements.txt
+├── core/           # Config (env vars)
+├── routers/        # API Routes (search, qa, ingest...)
+├── services/       # Logic xử lý chính
+│   ├── llm_client.py   # Kết nối Gemini/LangChain
+│   ├── embedder.py     # Tạo Vector Embedding
+│   ├── retriever.py    # Truy vấn pgvector (SQL)
+│   └── rag_pipeline.py # Luồng xử lý RAG
+├── models/         # Pydantic Schemas
+└── main.py         # Entry point
 ```
 
+## 📝 Ghi chú phát triển
 
-## Ghi chú
-- Port mặc định là 8000 (xem `compose.yaml` và `Dockerfile`).
-- Nếu đổi port trong container, đảm bảo `uvicorn --port` và mapping port của Compose trùng khớp.
-- Thư mục dữ liệu FAISS/BM25 demo ở `app/data/`; khi triển khai, cân nhắc mount volume hoặc đóng gói dữ liệu vào image.
-
-
+*   Cần đảm bảo container `newsapp-pg` (Postgres) đã cài đặt extension `vector`.
+*   Khi sửa code Python, cần restart container để áp dụng thay đổi:
+    ```bash
+    docker compose restart newsappchatbot
+    ```

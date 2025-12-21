@@ -28,9 +28,9 @@ async def qa(req: QAReq):
     
     if relevant_chunks:
         # Construct context from top chunks
-        context_parts = [c['text'] for c in relevant_chunks]
+        context_parts = [c['chunk_text'] for c in relevant_chunks]
         context = "\n\n...\n\n".join(context_parts)
-        citations = [f"Chunk #{c['chunk_idx']} (Score: {c['score']:.2f})" for c in relevant_chunks]
+        citations = [f"Text match (Score: {c['score']:.2f})" for c in relevant_chunks]
     
     # STRATEGY 2: FALLBACK TO FULL CONTENT (CONTEXT STUFFING)
     # If vector search returns nothing (maybe article not ingested yet?), fetch full content from backend

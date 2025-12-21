@@ -54,27 +54,25 @@ def hybrid_search(query: str, article_id: Optional[int], filters: Optional[Dict[
         if article_id: sql_params.append(article_id)
         
         sql_params.append(vec_str) # for Order By
-        sql_params.append(settings.TOP_K_VEC) # for Limit
+        # sql_params.append(settings.TOP_K_VEC)
+        sql_params.append(50) # Increased limit for client-side filtering
         
-        query_sql = f"""
-            SELECT article_id, chunk_text, 1 - (embedding <=> %s::vector) as score
-            FROM article_chunks
-            {where_str}
-            ORDER BY embedding <=> %s::vector
-            LIMIT %s;
-        """
-        
-        # Correct params alignment:
-        # 1. <=> %s in SELECT (optional, for score) -> we used %s inside select? 
-        # Actually standard pgvector usage:
-        # ORDER BY embedding <=> '[...]'
-        
-        # Simplified query to avoid parameter confusion:
+        # JOIN with articles and authors to get full metadata
         cur.execute(f"""
-            SELECT article_id, chunk_text, 1 - (embedding <=> %s::vector) as score
-            FROM article_chunks
+            SELECT 
+                ac.article_id, 
+                ac.chunk_text, 
+                1 - (ac.embedding <=> %s::vector) as score,
+                a.title,
+                a.image_url,
+                a.category,
+                a.created_at,
+                au.display_name
+            FROM article_chunks ac
+            JOIN articles a ON ac.article_id = a.id
+            JOIN authors au ON a.author_id = au.id
             {where_str}
-            ORDER BY embedding <=> %s::vector
+            ORDER BY ac.embedding <=> %s::vector
             LIMIT %s;
         """, (vec_str, *sql_params))
         
@@ -83,13 +81,23 @@ def hybrid_search(query: str, article_id: Optional[int], filters: Optional[Dict[
         
         # 3. Format Output
         out = []
+        seen_ids = set()
         for r in rows:
-            # r = (article_id, chunk_text, score)
+            # Deduplicate by article_id (since multiple chunks might match same article)
+            a_id = r[0]
+            if a_id in seen_ids:
+                continue
+            seen_ids.add(a_id)
+
             out.append({
-                "articleId": r[0],
-                "chunk_idx": 0, # we didn't store idx effectively, 0 is placeholder
-                "text": r[1],
-                "score": float(r[2])
+                "article_id": a_id,
+                "chunk_text": r[1],
+                "score": float(r[2]),
+                "title": r[3],
+                "image_url": r[4],
+                "category": r[5] if r[5] else "",
+                "published_at": r[6].isoformat() if r[6] else "",
+                "author_name": r[7]
             })
             
         return out
