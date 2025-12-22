@@ -1,17 +1,16 @@
 services:
   newsappchatbot:
-    image: newsappchatbot
-    build:
-      context: .
-      dockerfile: ./Dockerfile
+    image: ${DOCKER_USERNAME}/newsapp-chatbot:latest
+    container_name: newsapp-chatbot
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
-      # Connect to services running on HOST (Windows Docker Desktop)
-      PG_DSN: "postgresql://postgres:postgres@host.docker.internal:5432/newsapp"
+      # Use host.docker.internal to talk to other containers mapped to host ports
+      # Postgres is at port 5432 on host
+      PG_DSN: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@host.docker.internal:5432/newsapp"
+      # Backend is at port 8080 on host
       BACKEND_BASE: "http://host.docker.internal:8080"
-      GOOGLE_API_KEY: "${GOOGLE_API_KEY}" # Read from .env file in this directory
-    volumes:
-      - .:/app
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
     extra_hosts:
-      - "host.docker.internal:host-gateway" # Required for Linux/some configs, safe to add
+      - "host.docker.internal:host-gateway"

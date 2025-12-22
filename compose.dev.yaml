@@ -1,0 +1,18 @@
+services:
+  newsappchatbot:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    # Override the 'image' from prod so we don't try to pull it
+    image: newsapp-chatbot-dev
+    environment:
+      # Local dev usually connects to local DB and Backend
+      # IF backend is running on port 8080 on Windows:
+      PG_DSN: "postgresql://postgres:postgres@host.docker.internal:5432/newsapp"
+      BACKEND_BASE: "http://host.docker.internal:8080"
+      # Read key from local .env file
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+    volumes:
+      - .:/app
+    # Enable hot reload command if supported, or just rely on volume binding
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
