@@ -57,7 +57,8 @@ def hybrid_search(query: str, article_id: Optional[int], filters: Optional[Dict[
         # sql_params.append(settings.TOP_K_VEC)
         sql_params.append(50) # Increased limit for client-side filtering
         
-        # JOIN with articles and authors to get full metadata
+        # JOIN with articles to get full metadata
+        # JOIN with users to get author name (Author entity merged into User)
         cur.execute(f"""
             SELECT 
                 ac.article_id, 
@@ -67,10 +68,10 @@ def hybrid_search(query: str, article_id: Optional[int], filters: Optional[Dict[
                 a.image_url,
                 a.category,
                 a.created_at,
-                au.display_name
+                u.display_name
             FROM article_chunks ac
             JOIN articles a ON ac.article_id = a.id
-            JOIN authors au ON a.author_id = au.id
+            LEFT JOIN users u ON a.author_id = u.id
             {where_str}
             ORDER BY ac.embedding <=> %s::vector
             LIMIT %s;
@@ -97,7 +98,7 @@ def hybrid_search(query: str, article_id: Optional[int], filters: Optional[Dict[
                 "image_url": r[4],
                 "category": r[5] if r[5] else "",
                 "published_at": r[6].isoformat() if r[6] else "",
-                "author_name": r[7]
+                "author_name": r[7] if r[7] else "Unknown"
             })
             
         return out
