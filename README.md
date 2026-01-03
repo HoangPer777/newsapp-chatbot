@@ -54,12 +54,25 @@ EMBED_MODEL_GEMINI=models/text-embedding-004
 ```
 
 ### 3. Khởi chạy với Docker
-Dịch vụ được tích hợp trong file `docker-compose.yml` của toàn bộ dự án.
+
+#### 🛠 Môi trường Phát triển (Development)
+Chế độ này hỗ trợ **Hot-reload** (sửa code tự động cập nhật) và build trực tiếp từ source code.
 
 ```bash
-# Tại thư mục gốc của project (nơi chứa docker-compose.yml chính)
-docker compose up -d newsappchatbot
+# Tại thư mục newsapp-chatbot
+docker compose -f compose.dev.yaml up --build
 ```
+*   API chạy tại: `http://localhost:8000`
+*   Tự động kết nối với Backend/DB đang chạy ở máy chủ (nếu chạy local thì cần đảm bảo backend chạy docker hoặc cấu hình lại IP).
+
+#### 🚀 Môi trường Production (Deploy)
+Chế độ này sử dụng image đã build sẵn từ Docker Hub, tối ưu cho Deployment.
+
+```bash
+docker compose -f compose.yaml up -d
+```
+*   Sử dụng image: `phanh/newsapp-chatbot:latest` (hoặc username của bạn).
+*   Restart policy: `unless-stopped`.
 
 ### 4. API Endpoints
 
@@ -90,7 +103,4 @@ app/
 ## 📝 Ghi chú phát triển
 
 *   Cần đảm bảo container `newsapp-pg` (Postgres) đã cài đặt extension `vector`.
-*   Khi sửa code Python, cần restart container để áp dụng thay đổi:
-    ```bash
-    docker compose restart newsappchatbot
-    ```
+*   Ở chế độ Development (`compose.dev.yaml`), mọi thay đổi trong folder `app/` sẽ được tự động áp dụng mà không cần restart container.

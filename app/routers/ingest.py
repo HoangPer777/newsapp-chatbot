@@ -1,43 +1,97 @@
-# app/routers/ingest.py
-from fastapi import APIRouter
-from app.clients.backend_client import get_all_articles_custom
-from app.services.embedder import encode
+from fastapi import APIRouter, BackgroundTasks
+from app.clients.backend_client import get_all_articles_custom, get_article_by_id
 from app.core.config import settings
+from app.services.embedder import encode
 import psycopg2
 
 router = APIRouter()
 
-@router.post("/sync")
-async def sync_data():
+@router.post("/ingest/{article_id}")
+async def ingest_article(article_id: int):
     """
-    Fetch all articles from backend and ingest into pgvector.
-    Creates table if not exists.
+    Ingest a single article by ID. Fetches data from backend and embeds it.
     """
     try:
-        # 1. Fetch data
-        # Note: You need to ensure get_all_articles() is implemented in backend_client.py
-        # Current backend_client.py likely only has get_article_by_id.
-        # We'll need to double check or mock it.
-        # For now, let's assume we can fetch list.
-        # IF backend doesn't support list all, we might fail here.
+        # Fetch from backend
+        article_data = await get_article_by_id(article_id)
+        if not article_data:
+            return {"error": f"Article {article_id} not found in backend."}
+
+        conn = psycopg2.connect(settings.PG_DSN)
+        success = _process_and_store_article(conn, article_data)
+        conn.close()
         
-        # Temporary: To make it work immediately without modifying backend java code significantly,
-        # we might need to rely on what's available or ask user to provide list.
-        # Assuming the backend has GET /articles endpoint (common in REST).
+        if success:
+            return {"message": f"Article {article_id} ingested successfully."}
+        else:
+            return {"message": f"Article {article_id} skipped (too short, exists, or error)."}
+            
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.post("/sync")
+async def sync_data(background_tasks: BackgroundTasks):
+    """
+    Trigger background sync of articles. Returns immediately.
+    """
+    background_tasks.add_task(sync_data_worker)
+    return {"message": "Sync started in background. Check server logs for progress."}
+
+def _process_and_store_article(conn, art: dict):
+    cur = conn.cursor()
+    
+    # Check exist
+    cur.execute("SELECT id FROM article_chunks WHERE article_id = %s LIMIT 1", (art['id'],))
+    if cur.fetchone(): 
+        # Optional: update logic could go here. For now, skip if exists.
+        return False
+    
+    text = art.get('content') or art.get('contentPlain') or ""
+    if len(text) < 10: return False
+    
+    # Truncate to be safe for embedding limit
+    search_text = f"{art.get('title')} {art.get('summary') or ''} {text[:8000]}"
+    
+    # Retry loop
+    max_retries = 3
+    vector = None
+    for attempt in range(max_retries):
+        try:
+            vector = encode([search_text])[0]
+            break # Success
+        except Exception as e:
+            if "429" in str(e) or "quota" in str(e).lower():
+                print(f"Rate limit hit at article {art['id']}. Waiting 10s...")
+                import time
+                time.sleep(10)
+            else:
+                print(f"Error embedding article {art['id']}: {e}")
+                vector = None
+                break
+    
+    if vector is None: return False
+
+    cur.execute(
+        "INSERT INTO article_chunks (article_id, chunk_text, embedding) VALUES (%s, %s, %s)",
+        (art['id'], search_text, str(vector))
+    )
+    conn.commit()
+    return True
+
+async def sync_data_worker():
+    print("Starting background sync...")
+    try:
         from app.clients.backend_client import get_all_articles_custom
         articles = await get_all_articles_custom()
         
         if not articles:
-            return {"message": "No articles found or backend unreachable"}
+            print("No articles found to sync.")
+            return
 
-        # 2. Connect DB
         conn = psycopg2.connect(settings.PG_DSN)
         cur = conn.cursor()
         
-        # 3. Create extension and table
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-        conn.commit()
-        
         cur.execute("""
             CREATE TABLE IF NOT EXISTS article_chunks (
                 id SERIAL PRIMARY KEY,
@@ -48,49 +102,24 @@ async def sync_data():
         """)
         conn.commit()
         
-        # 4. Clear old data? (Optional, or just append distinct)
-        # cur.execute("TRUNCATE TABLE article_chunks;") 
-        
-        # 5. Ingest
         count = 0
-        for art in articles:
-            # Check if exists to avoid dups (naive check)
-            cur.execute("SELECT id FROM article_chunks WHERE article_id = %s LIMIT 1", (art['id'],))
-            if cur.fetchone(): continue
+        total = len(articles)
+        print(f"Found {total} articles. Processing...")
+
+        for i, art in enumerate(articles):
+            try:
+                if _process_and_store_article(conn, art):
+                    count += 1
+                
+                if count % 10 == 0:
+                    print(f"Synced {count} articles...")
+
+            except Exception as e:
+                print(f"Error processing item {i}: {e}")
+                continue
             
-            text = art.get('content') or art.get('contentPlain') or ""
-            if len(text) < 10: continue
-            
-            # Smart Chunking (simple version: split by 500 chars)
-            # Better: Use langchain RecursiveCharacterTextSplitter if available
-            # But to keep dependencies low, naive split ok for now or full text if short.
-            # Assuming 'context stuffing' style for Q&A, we might want full text if not too long.
-            # But for SEARCH, full text vector might be diluted.
-            # Let's simple split.
-            
-            # For this MVP, let's just store the TITLE + SUMMARY + first 1000 chars of CONTENT for search
-            # This is efficient for retrieval.
-            
-            # IMPORTANT for Gemini Embedding: Input text limit is often ~2048 tokens or 10k chars.
-            # We must be safe.
-            search_text = f"{art.get('title')} {art.get('summary') or ''} {text[:8000]}"
-            vector = encode([search_text])[0]
-            
-            cur.execute(
-                "INSERT INTO article_chunks (article_id, chunk_text, embedding) VALUES (%s, %s, %s)",
-                (art['id'], search_text, str(vector))
-            )
-            count += 1
-            
-            # Throttle if using Cloud Embeddings (Gemini Free Tier has rate limits)
-            if settings.EMBED_PROVIDER == "gemini":
-                import time
-                time.sleep(2) # Wait 2s between requests to be safe
-            
-        conn.commit()
         conn.close()
-        return {"message": f"Synced {count} new articles to pgvector"}
+        print(f"Sync complete. Total new: {count}")
         
     except Exception as e:
-        print(f"Ingest error: {e}")
-        return {"error": str(e)}
+        print(f"Background sync error: {e}")

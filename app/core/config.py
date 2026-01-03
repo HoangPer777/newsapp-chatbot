@@ -40,6 +40,6 @@ class Settings(BaseSettings):
     # If running inside docker, it should be 'postgres://postgres:postgres@db:5432/newsapp'
     PG_DSN: str = Field(default="postgresql://postgres:postgres@localhost:5432/newsapp", description="Postgres connection string")
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra='ignore')
 
 settings = Settings()

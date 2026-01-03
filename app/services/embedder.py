@@ -11,7 +11,7 @@ if _provider == "hf":
     from sentence_transformers import SentenceTransformer
     _model = SentenceTransformer(settings.EMBED_MODEL_HF)
 
-elif _provider == "gemini":
+if _provider == "gemini":
     from langchain_google_genai import GoogleGenerativeAIEmbeddings
     # Note: langchain wrapper handles retries and async internally often, 
     # but we use synchronous invoke here for simplicity in this wrapper functions

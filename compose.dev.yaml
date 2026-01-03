@@ -12,6 +12,8 @@ services:
       BACKEND_BASE: "http://host.docker.internal:8080"
       # Read key from local .env file
       GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+    ports:
+      - "8000:8000"
     volumes:
       - .:/app
     # Enable hot reload command if supported, or just rely on volume binding
