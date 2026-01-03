@@ -6,7 +6,7 @@ import psycopg2
 
 router = APIRouter()
 
-@router.post("/ingest/{article_id}")
+@router.post("/{article_id}")
 async def ingest_article(article_id: int):
     """
     Ingest a single article by ID. Fetches data from backend and embeds it.
