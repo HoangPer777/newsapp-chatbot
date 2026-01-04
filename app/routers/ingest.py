@@ -6,6 +6,14 @@ import psycopg2
 
 router = APIRouter()
 
+@router.post("/sync")
+async def sync_data(background_tasks: BackgroundTasks):
+    """
+    Trigger background sync of articles. Returns immediately.
+    """
+    background_tasks.add_task(sync_data_worker)
+    return {"message": "Sync started in background. Check server logs for progress."}
+
 @router.post("/{article_id}")
 async def ingest_article(article_id: int):
     """
@@ -28,14 +36,6 @@ async def ingest_article(article_id: int):
             
     except Exception as e:
         return {"error": str(e)}
-
-@router.post("/sync")
-async def sync_data(background_tasks: BackgroundTasks):
-    """
-    Trigger background sync of articles. Returns immediately.
-    """
-    background_tasks.add_task(sync_data_worker)
-    return {"message": "Sync started in background. Check server logs for progress."}
 
 def _process_and_store_article(conn, art: dict):
     cur = conn.cursor()

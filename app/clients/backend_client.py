@@ -25,7 +25,8 @@ async def get_all_articles_custom() -> list[dict]:
     # Try fetching list of articles from common endpoints
     # Adjust '/articles' if your Spring controller endpoint is different
     # Assumes valid JSON response list
-    url = f"{settings.BACKEND_BASE}/api/articles?sort=all" 
+    # url = f"{settings.BACKEND_BASE}/api/articles?sort=all" 
+    url = f"{settings.BACKEND_BASE}/api/articles"
     async with httpx.AsyncClient(timeout=30) as c:
         try:
             r = await c.get(url)

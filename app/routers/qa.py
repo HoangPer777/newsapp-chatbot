@@ -30,8 +30,16 @@ async def qa(req: QAReq):
         # Construct context from top chunks
         context_parts = [c['chunk_text'] for c in relevant_chunks]
         context = "\n\n...\n\n".join(context_parts)
-        citations = [f"Text match (Score: {c['score']:.2f})" for c in relevant_chunks]
-    
+        
+        # citations = [f"Text match (Score: {c['score']:.2f})" for c in relevant_chunks]
+    # SỬA Ở ĐÂY: Thay vì chỉ lưu text, hãy lưu article_id của từng chunk
+        # Dùng set() để tránh trùng lặp nếu nhiều chunk thuộc cùng 1 bài báo
+        seen_ids = set()
+        for c in relevant_chunks:
+            aid = c.get('article_id')
+            if aid and aid not in seen_ids:
+                citations.append(f"article_id:{aid}") # Định dạng đặc biệt để Flutter dễ nhận biết
+                seen_ids.add(aid)
     # STRATEGY 2: FALLBACK TO FULL CONTENT (CONTEXT STUFFING)
     # If vector search returns nothing (maybe article not ingested yet?), fetch full content from backend
     if not context and req.articleId:
@@ -49,10 +57,15 @@ async def qa(req: QAReq):
         pass
 
     # Call LLM
+    # res = await answer(
+    #     question=req.question,
+    #     article_id=req.articleId,
+    #     filters=req.filters,
+    #     context=context
+    # )
     res = await answer(
         question=req.question,
-        article_id=req.articleId,
-        filters=req.filters,
+        chunks=relevant_chunks, # Truyền cái List Dictionary vừa lấy được
         context=context
     )
     
