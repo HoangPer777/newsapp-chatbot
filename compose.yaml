@@ -6,12 +6,14 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # Lấy giá trị từ file .env truyền vào App
       PG_DSN: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@host.docker.internal:5432/newsapp"
-      BACKEND_BASE: "http://host.docker.internal:8080"
-      GOOGLE_API_KEY: "${GOOGLE_API_KEY}" # Dùng biến môi trường cho bảo mật
-      # GIỮ LẠI CÁC DÒNG NÀY ĐỂ AI CHẠY ĐÚNG:
-      EMBED_PROVIDER: "hf"
-      EMBED_MODEL_HF: "vinai/phobert-base"
-      EMBED_DIM: 768
+      BACKEND_BASE: "${BACKEND_BASE}"
+      JAVA_ACCESS_TOKEN: "${JAVA_ACCESS_TOKEN}"
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+      EMBED_PROVIDER: "${EMBED_PROVIDER}"
+      EMBED_MODEL_HF: "${EMBED_MODEL_HF}"
+      EMBED_DIM: "${EMBED_DIM}"
+      ARTICLE_DETAIL_BASE_URL: "${ARTICLE_DETAIL_BASE_URL}"
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -1,79 +1,132 @@
-# app/routers/qa.py
+import math
 from fastapi import APIRouter, HTTPException
-from app.models.schemas import QAReq, QAOut
+from app.models.schemas import QAReq, QAOut, RelatedSource
 from app.services.rag_pipeline import answer
 from app.services.retriever import hybrid_search
 from app.clients.backend_client import get_article_by_id
+from app.core.config import settings
+
 
 router = APIRouter()
 
 @router.post("", response_model=QAOut)
 async def qa(req: QAReq):
-    """
-    Q&A using Vector RAG (pgvector).
-    1. If articleId provided -> Search relevant chunks within that article.
-    2. Retrieve Context.
-    3. Generate Answer.
-    """
     if not req.question.strip():
-        raise HTTPException(400, "question is empty")
+        raise HTTPException(status_code=400, detail="Câu hỏi không được để trống")
 
     context = ""
-    citations = []
+    related_sources = []
+    seen_ids = set()
+    relevant_chunks = []
+    valid_texts_for_context = []
 
-    # STRATEGY 1: VECTOR SEARCH (RAG)
-    # Search for relevant chunks in pgvector (filtered by articleId if present)
-    # This is better than reading the whole article if the article is long.
-    relevant_chunks = hybrid_search(req.question, article_id=req.articleId, filters=req.filters)
-    
-    if relevant_chunks:
-        # Construct context from top chunks
-        context_parts = [c['chunk_text'] for c in relevant_chunks]
-        context = "\n\n...\n\n".join(context_parts)
+    # 1. Tìm kiếm dữ liệu từ Vector DB
+    try:
+        search_id = req.articleId if (req.articleId and req.articleId != 0) else None
+        relevant_chunks = hybrid_search(req.question, article_id=search_id, filters=req.filters)
+        print(f"DEBUG: Tìm thấy {len(relevant_chunks)} đoạn văn từ DB")
+    except Exception as e:
+        print(f"Lỗi Vector Search: {e}")
+        relevant_chunks = []
+
         
-        # citations = [f"Text match (Score: {c['score']:.2f})" for c in relevant_chunks]
-    # SỬA Ở ĐÂY: Thay vì chỉ lưu text, hãy lưu article_id của từng chunk
-        # Dùng set() để tránh trùng lặp nếu nhiều chunk thuộc cùng 1 bài báo
-        seen_ids = set()
+        # 2. Xử lý logic lọc, cứu bài nan và tạo Context
+    if relevant_chunks:
+        SCORE_THRESHOLD = 0.3 # Ngưỡng lọc bài rác
+        all_potential_sources = []
+        query_clean = req.question.lower().strip()
+        
+        # Lấy danh sách các từ trong câu hỏi để so khớp
+        query_words = [word.lower() for word in query_clean.split() if len(word) >= 2]
+
         for c in relevant_chunks:
             aid = c.get('article_id')
-            if aid and aid not in seen_ids:
-                citations.append(f"article_id:{aid}") # Định dạng đặc biệt để Flutter dễ nhận biết
-                seen_ids.add(aid)
-    # STRATEGY 2: FALLBACK TO FULL CONTENT (CONTEXT STUFFING)
-    # If vector search returns nothing (maybe article not ingested yet?), fetch full content from backend
-    if not context and req.articleId:
+            raw_score = c.get('score')
+            
+            # Xử lý điểm số NaN hoặc None
+            if raw_score is None or (isinstance(raw_score, float) and math.isnan(raw_score)):
+                final_score = 0.0
+            else:
+                final_score = float(raw_score)
+
+            chunk_text = c.get('chunk_text', '')
+            chunk_text_lower = chunk_text.lower()
+
+            # --- LOGIC BOOSTING TỪ KHÓA ---
+            # Chỉ thưởng điểm nếu từ trong câu hỏi xuất hiện trong nội dung bài báo
+            match_count = sum(1 for word in query_words if word in chunk_text_lower)
+            # if match_count > 0:
+            if match_count <= 0:
+                final_score -= 0.5 
+            else:
+                # Mỗi từ khớp thưởng 0.2 điểm
+                final_score += (match_count * 0.2)
+                # print(f"--> Boosting cho bài {aid}: {match_count} từ khớp. Điểm mới: {final_score}")
+
+
+            # Kiểm tra bài viết có vượt qua ngưỡng lọc không
+            if final_score >= SCORE_THRESHOLD:
+                valid_texts_for_context.append(chunk_text)
+                if aid and aid not in seen_ids:
+                    all_potential_sources.append(RelatedSource(
+                        id=aid,
+                        title=chunk_text.split('\n')[0][:100] or "Bài viết liên quan",
+                        link=f"{settings.ARTICLE_DETAIL_BASE_URL}/{aid}",
+                        score=final_score
+                    ))
+                    seen_ids.add(aid)
+
+        # Sắp xếp và lấy 3 nguồn liên quan nhất
+        all_potential_sources.sort(key=lambda x: x.score, reverse=True)
+        related_sources = all_potential_sources[:3] 
+
+        if valid_texts_for_context:
+            context = "\n\n---\n\n".join(valid_texts_for_context)
+
+    # 3. Fallback
+    if not context and req.articleId and req.articleId != 0:
         try:
             article = await get_article_by_id(req.articleId)
             if article:
                 context = article.get("content") or article.get("contentPlain") or ""
+                related_sources = [RelatedSource(
+                    id=req.articleId,
+                    title=article.get("title", "Bài báo hiện tại"),
+                    link=f"{settings.ARTICLE_DETAIL_BASE_URL}/{req.articleId}",
+                    # link=f"http://10.0.2.2:8080/api/articles/{req.articleId}",
+                    score=1.0
+                )]
         except Exception as e:
-            print(f"Fallback fetch error: {e}")
+            print(f"Lỗi Fallback: {e}")
 
-    if not context:
-        # If still no context, we can't answer strictly based on article
-        # But maybe we try to answer generally? Or return error?
-        # Requirement says "Chat with article", so better return "I don't know".
-        pass
+    # 4. Kiểm tra context trống
+    if not context.strip():
+        context = "Không tìm thấy bài báo nào liên quan. Nếu đây là câu hỏi xã giao, hãy trả lời bình thường. Nếu là câu hỏi kiến thức, hãy báo là không có dữ liệu."
+    
+    # 5. Gọi AI trả lời
+    try:
+        res = await answer(question=req.question, chunks=relevant_chunks, context=context)
+        final_answer = res.get('answer', '')
+        
+        # Danh sách các câu "từ chối" của AI khi KHÔNG tìm thấy kiến thức trong bài báo
+        no_info_signals = ["không tìm thấy", "không có thông tin", "không đề cập", "tôi không biết"]
+        
+        # LOGIC QUYẾT ĐỊNH HIỆN LINK:
+        # Nếu AI trả lời xã giao (Chào bạn...) thì final_answer sẽ không chứa các từ khóa từ chối trên.
+        # Nhưng vì context trống, related_sources lúc này vốn dĩ đã là [] (mảng rỗng).
+        
+        is_no_info = any(sig in final_answer.lower() for sig in no_info_signals)
+        
+        if is_no_info:
+            final_sources = [] # Gõ rác "dsjfh" -> AI báo không thấy -> Xóa link
+        else:
+            final_sources = related_sources # Gõ "AI", "Spring" -> Thấy bài -> Hiện link
 
-    # Call LLM
-    # res = await answer(
-    #     question=req.question,
-    #     article_id=req.articleId,
-    #     filters=req.filters,
-    #     context=context
-    # )
-    res = await answer(
-        question=req.question,
-        chunks=relevant_chunks, # Truyền cái List Dictionary vừa lấy được
-        context=context
-    )
-    
-    # Merge citations if any
-    # (The answer function might return generic citations, we can enhance them)
-    # If using vector RAG, we trust the vector chunks more.
-    
-    return QAOut(
-        answer=res['answer'],
-        citations=citations if citations else res['citations']
-    )
+        return QAOut(
+            answer=final_answer,
+            related_articles=final_sources
+        )
+    except Exception as e:
+        print(f"Lỗi AI: {e}")
+        # Nếu AI lỗi (429...), cũng không hiện link lung tung
+        return QAOut(answer=f"Lỗi hệ thống AI: {str(e)}", related_articles=[])
