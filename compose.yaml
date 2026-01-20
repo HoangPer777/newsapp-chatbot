@@ -1,16 +1,19 @@
 services:
   newsappchatbot:
-    image: ${DOCKER_USERNAME}/newsapp-chatbot:latest
+    build: . # Nên giữ dòng này để nó luôn cập nhật code mới nhất Han sửa
     container_name: newsapp-chatbot
     restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
-      # Use host.docker.internal to talk to other containers mapped to host ports
-      # Postgres is at port 5432 on host
+      # Lấy giá trị từ file .env truyền vào App
       PG_DSN: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@host.docker.internal:5432/newsapp"
-      # Backend is at port 8080 on host
-      BACKEND_BASE: "http://host.docker.internal:8080"
+      BACKEND_BASE: "${BACKEND_BASE}"
+      JAVA_ACCESS_TOKEN: "${JAVA_ACCESS_TOKEN}"
       GOOGLE_API_KEY: "${GOOGLE_API_KEY}"
+      EMBED_PROVIDER: "${EMBED_PROVIDER}"
+      EMBED_MODEL_HF: "${EMBED_MODEL_HF}"
+      EMBED_DIM: "${EMBED_DIM}"
+      ARTICLE_DETAIL_BASE_URL: "${ARTICLE_DETAIL_BASE_URL}"
     extra_hosts:
       - "host.docker.internal:host-gateway"

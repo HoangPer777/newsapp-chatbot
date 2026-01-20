@@ -9,82 +9,53 @@ def _get_conn():
     return psycopg2.connect(settings.PG_DSN)
 
 def hybrid_search(query: str, article_id: Optional[int], filters: Optional[Dict[str, Any]]) -> List[dict]:
-    """
-    Search using pgvector cosine distance.
-    Currently only Vector search is implemented (Hybrid with BM25 requires more complex setup in Postgres or Python).
-    
-    Args:
-        query: User question
-        article_id: Filter by article (for Q&A context)
-        filters: Additional filters
-    """
     try:
         # 1. Embed Query
         qv = encode([query])[0]
+        vec_str = str(list(qv)) # Đảm bảo định dạng '[0.1, 0.2, ...]'
         
-        # 2. SQL Query
-        # 1 - (embedding <=> qv) converts distance to similarity score
         conn = _get_conn()
         cur = conn.cursor()
         
-        # Base query
-        # We need to cast the list[float] to string representation for pgvector input: '[0.1, 0.2, ...]'
-        vec_str = str(qv)
+        # 2. Xây dựng tham số SQL theo ĐÚNG THỨ TỰ xuất hiện của %s
+        # Thứ tự trong Execute: [1. vec_str cho Score, 2. article_id cho WHERE (nếu có), 3. vec_str cho ORDER BY, 4. LIMIT]
         
-        where_clauses = []
-        params = [vec_str] # for ORDER BY embedding <=> %s
+        where_clause = ""
+        params = [vec_str] # %s đầu tiên cho 'score'
         
-        # Optional: Filter by article_id (if this is Q&A within an article context)
-        # Note: If article_id is strictly provided, we might just want to return all chunks of that article?
-        # But RAG usually scans relevancy.
-        if article_id:
-            where_clauses.append("article_id = %s")
-            params.append(article_id)
+        if article_id and article_id != 0:
+            where_clause = "WHERE ac.article_id = %s"
+            params.append(article_id) # %s thứ hai
+            
+        params.append(vec_str) # %s thứ ba cho ORDER BY
+        params.append(50)      # %s thứ tư cho LIMIT
 
-        where_str = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-        
-        # Note: ORDER BY <-> requires the vector parameter again?
-        # A common pattern: ORDER BY embedding <=> %s
-        # params needs: [vec_str] (for order by) + [filters...]
-        
-        # Let's fix params order based on SQL structure:
-        # SELECT ... FROM ... WHERE ... ORDER BY ... LIMIT ...
-        
-        sql_params = []
-        if article_id: sql_params.append(article_id)
-        
-        sql_params.append(vec_str) # for Order By
-        # sql_params.append(settings.TOP_K_VEC)
-        sql_params.append(50) # Increased limit for client-side filtering
-        
-        # JOIN with articles to get full metadata
-        # JOIN with users to get author name (Author entity merged into User)
         cur.execute(f"""
             SELECT 
                 ac.article_id, 
                 ac.chunk_text, 
-                1 - (ac.embedding <=> %s::vector) as score,
-                a.title,
-                a.image_url,
-                a.category,
-                a.created_at,
-                u.display_name
+                COALESCE(1 - (ac.embedding <=> %s::vector), 0) as score,
+                a.title,         -- (r[3])
+                a.image_url,     -- (r[4])
+                a.category,      -- (r[5])
+                a.created_at,    -- (r[6])
+                u.display_name   -- (r[7])
             FROM article_chunks ac
             JOIN articles a ON ac.article_id = a.id
             LEFT JOIN users u ON a.author_id = u.id
-            {where_str}
+            {where_clause}
             ORDER BY ac.embedding <=> %s::vector
             LIMIT %s;
-        """, (vec_str, *sql_params))
+        """, tuple(params))
         
         rows = cur.fetchall()
+        cur.close()
         conn.close()
         
         # 3. Format Output
         out = []
         seen_ids = set()
         for r in rows:
-            # Deduplicate by article_id (since multiple chunks might match same article)
             a_id = r[0]
             if a_id in seen_ids:
                 continue

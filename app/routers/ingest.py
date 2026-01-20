@@ -3,8 +3,17 @@ from app.clients.backend_client import get_all_articles_custom, get_article_by_i
 from app.core.config import settings
 from app.services.embedder import encode
 import psycopg2
+import time
 
 router = APIRouter()
+
+@router.post("/sync")
+async def sync_data(background_tasks: BackgroundTasks):
+    """
+    Trigger background sync of articles. Returns immediately.
+    """
+    background_tasks.add_task(sync_data_worker)
+    return {"message": "Sync started in background. Check server logs for progress."}
 
 @router.post("/{article_id}")
 async def ingest_article(article_id: int):
@@ -28,14 +37,6 @@ async def ingest_article(article_id: int):
             
     except Exception as e:
         return {"error": str(e)}
-
-@router.post("/sync")
-async def sync_data(background_tasks: BackgroundTasks):
-    """
-    Trigger background sync of articles. Returns immediately.
-    """
-    background_tasks.add_task(sync_data_worker)
-    return {"message": "Sync started in background. Check server logs for progress."}
 
 def _process_and_store_article(conn, art: dict):
     cur = conn.cursor()
@@ -100,6 +101,7 @@ async def sync_data_worker():
                 embedding vector(768)
             );
         """)
+        #embedding vector(384); -- Thay đổi nếu dùng mô hình khác
         conn.commit()
         
         count = 0
@@ -110,6 +112,8 @@ async def sync_data_worker():
             try:
                 if _process_and_store_article(conn, art):
                     count += 1
+                    # Nghỉ 2 giây sau mỗi bài để tránh bị Google báo 429
+                    time.sleep(2)
                 
                 if count % 10 == 0:
                     print(f"Synced {count} articles...")

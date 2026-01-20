@@ -17,8 +17,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = Field(default="", description="LLM key")
     OPENAI_API_BASE: str = Field(default="https://api.openai.com/v1")
     LLM_MODEL: str = Field(default="models/gemini-flash-latest")   # thay bằng model bạn train / OAI compat
+    
+    # ARTICLE_DETAIL_BASE_URL: str = "http://10.0.2.2:8080/api/articles"  # link chi tiết bài báo (cho nguồn tham khảo) - nhớ đổi thành ip máy thật
+    JAVA_ACCESS_TOKEN: str = Field(default="", description="Token đăng nhập từ Spring Boot")
 
-    # embeddings
     # embeddings
     EMBED_PROVIDER: str = Field(default="gemini", description="hf|openai|gemini")
     EMBED_MODEL_HF: str = Field(default="intfloat/multilingual-e5-base")
